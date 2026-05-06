@@ -1,6 +1,6 @@
 """Session management routes."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Annotated, List
 from uuid import UUID
 
@@ -11,6 +11,9 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_db
 from app.models.database import Session, Scenario, Transcript, Feedback, User, ConversationState
+
+DEMO_EMAIL = "demo@salesforge.app"
+DEMO_DAILY_SESSION_LIMIT = 10
 from app.models.schemas import (
     SessionCreate,
     SessionResponse,
@@ -226,6 +229,18 @@ async def create_session(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> SessionResponse:
     """Start a new practice session."""
+    if current_user.email == DEMO_EMAIL:
+        since = datetime.now(timezone.utc) - timedelta(days=1)
+        result = await db.execute(
+            select(func.count(Session.id))
+            .where(Session.user_id == current_user.id, Session.created_at >= since)
+        )
+        if result.scalar() >= DEMO_DAILY_SESSION_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Demo account is limited to 10 sessions per day. Sign up for full access.",
+            )
+
     result = await db.execute(
         select(Scenario).where(
             Scenario.id == session_data.scenario_id,

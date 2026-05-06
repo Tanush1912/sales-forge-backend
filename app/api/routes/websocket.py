@@ -3,13 +3,13 @@
 import asyncio
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status, Query
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session_factory
@@ -20,6 +20,7 @@ from app.models.database import (
     Feedback,
     SessionAnalytics,
     ConversationState,
+    User,
 )
 from app.models.schemas import WSMessageType, WSServerMessage
 from app.core.llm.orchestrator import ConversationOrchestrator
@@ -27,6 +28,9 @@ from app.core.llm.prompt_builder import PersonaContext, ScenarioContext
 from app.core.voice.live_api_client import LiveAPIClient, LiveSessionConfig
 from app.api.routes.auth import validate_jwt
 from app.config import get_settings
+
+DEMO_EMAIL = "demo@salesforge.app"
+DEMO_DAILY_SESSION_LIMIT = 10
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +97,7 @@ async def call_websocket(
         return
 
     try:
-        await validate_jwt(token)
+        jwt_payload = await validate_jwt(token)
     except Exception as e:
         await websocket.accept()
         await send_message(
@@ -107,6 +111,21 @@ async def call_websocket(
 
     factory = get_session_factory()
     async with factory() as db:
+        if jwt_payload.get("email") == DEMO_EMAIL:
+            user_id = jwt_payload.get("sub")
+            since = datetime.now(timezone.utc) - timedelta(days=1)
+            result = await db.execute(
+                select(func.count(Session.id))
+                .where(Session.user_id == user_id, Session.created_at >= since)
+            )
+            if result.scalar() >= DEMO_DAILY_SESSION_LIMIT:
+                await send_message(
+                    websocket,
+                    WSServerMessage(type=WSMessageType.ERROR, error="Demo account is limited to 10 sessions per day."),
+                )
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+
         result = await db.execute(
             select(Session)
             .options(
