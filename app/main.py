@@ -88,11 +88,18 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def add_security_headers(request, call_next):
         response = await call_next(request)
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss: https:;"
+        frame_ancestors = " ".join(settings.allowed_origins) if settings.allowed_origins else "'self'"
+        response.headers["Content-Security-Policy"] = (
+            f"default-src 'self'; "
+            f"script-src 'self' 'unsafe-inline'; "
+            f"style-src 'self' 'unsafe-inline'; "
+            f"img-src 'self' data:; "
+            f"connect-src 'self' wss: https:; "
+            f"frame-ancestors 'self' {frame_ancestors}"
+        )
         return response
 
     @app.middleware("http")
